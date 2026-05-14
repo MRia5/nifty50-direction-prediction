@@ -6,6 +6,7 @@ import pandas as pd
 
 from financial_ml_project.config import FEATURE_FILE, MLRUNS_DIR, NIFTY_FILE, OUTPUT_DIR
 from financial_ml_project.data import load_feature_table, load_modeling_frame
+from financial_ml_project.diagnostics import build_edge_diagnostics, split_boundary_sensitivity
 from financial_ml_project.features import build_feature_audit
 from financial_ml_project.metrics import bootstrap_metric_intervals, compute_metrics
 from financial_ml_project.modeling import (
@@ -120,6 +121,8 @@ def run_pipeline() -> None:
     walk_forward_baseline_df = pd.concat(walk_forward_baseline, ignore_index=True)
     fold_summary = pd.DataFrame(fold_rows)
     feature_importance = extract_feature_importance(final_model)
+    edge_diagnostics = build_edge_diagnostics(oos_predictions, oos_baseline)
+    boundary_sensitivity = split_boundary_sensitivity(frame)
 
     metrics_with_ci = pd.concat(
         [
@@ -138,6 +141,8 @@ def run_pipeline() -> None:
     oos_baseline.to_csv(OUTPUT_DIR / "oos_baseline_predictions.csv", index=False)
     metrics_with_ci.to_csv(OUTPUT_DIR / "metrics_with_bootstrap_ci.csv", index=False)
     feature_importance.to_csv(OUTPUT_DIR / "feature_importance.csv", index=False)
+    edge_diagnostics.to_csv(OUTPUT_DIR / "edge_diagnostics.csv", index=False)
+    boundary_sensitivity.to_csv(OUTPUT_DIR / "split_boundary_sensitivity.csv", index=False)
 
     save_confusion_plot(oos_predictions, OUTPUT_DIR / "confusion_matrix.png")
     save_roc_plot(oos_predictions, OUTPUT_DIR / "roc_curve.png")
@@ -147,6 +152,9 @@ def run_pipeline() -> None:
         metrics_with_ci=metrics_with_ci,
         feature_audit=feature_audit,
         feature_importance=feature_importance,
+        edge_diagnostics=edge_diagnostics,
+        boundary_sensitivity=boundary_sensitivity,
+        frame=frame,
         n_rows=len(frame),
         n_folds=len(folds),
         oos_rows=len(test_oos),

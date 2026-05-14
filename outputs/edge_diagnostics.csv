@@ -1,0 +1,7 @@
+test,statistic,value,interpretation
+hit_rate_vs_majority_baseline,two_sided_p_value,0.857987185935928,No statistically reliable directional edge if p-value is above 0.05.
+paired_permutation_edge,observed_hit_rate_edge,-0.008,Model hit rate minus majority-baseline hit rate on the same OOS dates.
+paired_permutation_edge,p_value,1.0,Probability of an absolute edge this large under paired sign randomization.
+random_label_baseline,observed_auc,0.5239497950819673,Observed model AUC on the true OOS labels.
+random_label_baseline,random_auc_mean,0.49990589139344266,Mean AUC after shuffling OOS labels against fixed model scores.
+random_label_baseline,auc_p_value,0.3246,Share of random-label trials with AUC at least as high as observed.
