@@ -1,0 +1,8 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+
+# Existing unrelated files in this folder.
+build_hr_dashboard.py
+HR_Automation_Dashboard.xlsx
