@@ -19,7 +19,7 @@ from financial_ml_project.modeling import (
     out_of_sample_split,
     predict_with_model,
 )
-from financial_ml_project.reporting import save_confusion_plot, save_roc_plot, write_report
+from financial_ml_project.reporting import save_confusion_plot, save_eda_plots, save_roc_plot, write_report
 
 
 def add_metadata(metrics: pd.DataFrame, model: str, sample: str) -> pd.DataFrame:
@@ -146,6 +146,7 @@ def run_pipeline() -> None:
 
     save_confusion_plot(oos_predictions, OUTPUT_DIR / "confusion_matrix.png")
     save_roc_plot(oos_predictions, OUTPUT_DIR / "roc_curve.png")
+    save_eda_plots(frame, feature_audit, OUTPUT_DIR)
     write_report(
         output_dir=OUTPUT_DIR,
         fold_summary=fold_summary,

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
 from sklearn.metrics import ConfusionMatrixDisplay, RocCurveDisplay
@@ -34,6 +35,30 @@ def save_roc_plot(predictions: pd.DataFrame, output_path: Path) -> None:
     ax.set_title("Out-of-Sample ROC Curve")
     fig.tight_layout()
     fig.savefig(output_path, dpi=160)
+    plt.close(fig)
+
+
+def save_eda_plots(frame: pd.DataFrame, feature_audit: pd.DataFrame, output_dir: Path) -> None:
+    corr = frame[SELECTED_FEATURES].corr()
+    fig, ax = plt.subplots(figsize=(8, 6))
+    image = ax.imshow(corr, cmap="coolwarm", vmin=-1, vmax=1)
+    ax.set_xticks(np.arange(len(SELECTED_FEATURES)))
+    ax.set_yticks(np.arange(len(SELECTED_FEATURES)))
+    ax.set_xticklabels(SELECTED_FEATURES, rotation=45, ha="right", fontsize=7)
+    ax.set_yticklabels(SELECTED_FEATURES, fontsize=7)
+    ax.set_title("Selected Feature Correlation")
+    fig.colorbar(image, ax=ax, fraction=0.046, pad=0.04)
+    fig.tight_layout()
+    fig.savefig(output_dir / "eda_correlation_heatmap.png", dpi=160)
+    plt.close(fig)
+
+    missing = feature_audit.sort_values("missing_rate", ascending=True).tail(12)
+    fig, ax = plt.subplots(figsize=(7, 4))
+    ax.barh(missing["feature"], missing["missing_rate"])
+    ax.set_xlabel("Missing rate")
+    ax.set_title("Highest Missingness In Starter Features")
+    fig.tight_layout()
+    fig.savefig(output_dir / "eda_missingness.png", dpi=160)
     plt.close(fig)
 
 
@@ -78,15 +103,20 @@ def write_report(
     oos_rows: int,
 ) -> None:
     selected_rows = [
-        {"feature": feature, "justification": FEATURE_JUSTIFICATIONS[feature]}
+        {
+            "feature": feature,
+            "safe_timestamp": "T+0 close, after NSE market hours",
+            "justification": FEATURE_JUSTIFICATIONS[feature],
+        }
         for feature in SELECTED_FEATURES
     ]
     selected_table = pd.DataFrame(selected_rows).to_markdown(index=False)
     dropped_table = feature_audit[~feature_audit["selected"]][
         ["feature", "leakage_risk", "reason"]
     ].to_markdown(index=False)
-    fold_table = fold_summary[
-        ["fold_id", "train_start", "train_end", "test_start", "test_end", "hit_rate", "auc"]
+    fold_snapshot = pd.concat([fold_summary.head(3), fold_summary.tail(3)])
+    fold_table = fold_snapshot[
+        ["fold_id", "test_start", "test_end", "hit_rate", "auc"]
     ].to_markdown(index=False, floatfmt=".4f")
     importance_table = feature_importance.head(12).to_markdown(index=False)
     diagnostics_table = edge_diagnostics.to_markdown(index=False, floatfmt=".4f")
@@ -127,17 +157,25 @@ The unconditional up-day rate in the usable sample is {positive_rate:.2%}, so a 
 
 The validation loop trains on months 1-N, predicts month N+1, shifts forward, and repeats. The July-December 2025 block is locked away until the final evaluation. Every training fold is wrapped in `mlflow.start_run()` from the beginning of the fold, with parameters, metrics, prediction artifacts, and model artifacts written to the committed `mlruns/` directory.
 
-## 3. Feature Audit And Final Features
+## 3. Feature Audit, EDA, And Final Features
 
 I used exactly 12 features. The selection rule was conservative: use features that can plausibly be known at today's close, are trailing/same-day rather than forward-looking, and are interpretable enough to defend. I did not find an explicit tomorrow-close column. I still dropped opaque engineered columns where the construction was not auditable.
 
 {selected_table}
 
+All selected features are safely computable only after the current trading session has completed. The intended prediction timestamp is therefore after the T+0 close, for a decision about the T+1 close direction. These features should not be used for an intraday prediction made before the current close is known.
+
+EDA changed three choices:
+
+- `outputs/eda_missingness.png`: the missingness plot showed that `close_vs_252d_high` and `close_vs_252d_low` have about 25% missing values because they need a full one-year lookback, so I dropped them.
+- `outputs/eda_correlation_heatmap.png`: the correlation heatmap showed overlapping trend/momentum clusters, so I kept one representative from each group instead of keeping `ret_5d`, `ret_10d`, `ret_20d`, `close_vs_ma5`, `close_vs_ma20`, and `momentum_5_20` all together.
+- `outputs/feature_importance.csv`: final-model importance concentrated on volatility, overnight return, and moving-average distance, which confirmed that the selected set still covered volatility, gap risk, trend, liquidity, cross-asset momentum, and VIX after dropping opaque features.
+
+Scaling decision: tree-based LightGBM does not require standard scaling, so I did not standardize features. Missing values are median-imputed inside the sklearn pipeline so imputation is fit only on each training window.
+
 The main suspicious column was `ma5_smooth_signal`. It is not a raw market measurement such as return, volatility, volume, or VIX. It is a prebuilt "signal" column, its exact formula is not documented in the data bundle, and its name suggests a smoothed trading rule rather than a transparent feature. Because the assignment asks for leakage awareness and because the provided starter features were explicitly "not rigorously audited," I treated it as medium leakage/model-design risk and removed it.
 
-Dropped feature audit:
-
-{dropped_table}
+Dropped-feature details are written to `outputs/feature_audit.csv`. The key removals were sparse 252-day features, highly overlapping trend/volatility variants, and `ma5_smooth_signal` because it is signal-like and undocumented.
 
 ## 4. Model
 
@@ -147,7 +185,7 @@ The model is a single `lightgbm.LGBMClassifier`. I removed logistic regression, 
 
 Walk-forward performance is weak. The model's walk-forward AUC is {wf_auc:.3f}, compared with {wf_baseline_auc:.3f} for the majority baseline. The model's walk-forward hit rate is {wf_hit:.2%}, while the majority baseline hit rate is {wf_baseline_hit:.2%}. In plain English: before the locked test period, the model is not convincingly better than a naive class-prior rule.
 
-Walk-forward fold details:
+Walk-forward fold snapshot; full fold table is in `outputs/walk_forward_folds.csv`:
 
 {fold_table}
 

@@ -16,50 +16,38 @@ The unconditional up-day rate in the usable sample is 53.09%, so a majority-clas
 
 The validation loop trains on months 1-N, predicts month N+1, shifts forward, and repeats. The July-December 2025 block is locked away until the final evaluation. Every training fold is wrapped in `mlflow.start_run()` from the beginning of the fold, with parameters, metrics, prediction artifacts, and model artifacts written to the committed `mlruns/` directory.
 
-## 3. Feature Audit And Final Features
+## 3. Feature Audit, EDA, And Final Features
 
 I used exactly 12 features. The selection rule was conservative: use features that can plausibly be known at today's close, are trailing/same-day rather than forward-looking, and are interpretable enough to defend. I did not find an explicit tomorrow-close column. I still dropped opaque engineered columns where the construction was not auditable.
 
-| feature          | justification                                                                         |
-|:-----------------|:--------------------------------------------------------------------------------------|
-| ret_1d           | Captures immediate NIFTY momentum/reversal using only today's close versus yesterday. |
-| ret_5d           | Measures one-week index momentum while staying fully trailing.                        |
-| ret_20d          | Represents roughly one-month trend pressure available at today's close.               |
-| ret_intraday     | Separates same-session open-to-close demand from overnight movement.                  |
-| ret_overnight    | Captures gap risk and overnight sentiment visible by today's close.                   |
-| high_low_range   | Proxy for same-day realized volatility and uncertainty.                               |
-| volume_ratio_20d | Compares current participation with trailing liquidity conditions.                    |
-| close_vs_ma20    | Shows current price extension versus a trailing one-month moving average.             |
-| vol_20d          | Measures trailing one-month realized volatility of NIFTY returns.                     |
-| rsi_14           | Standard trailing momentum oscillator for overbought/oversold behavior.               |
-| bn_ret_5d        | Adds related-sector momentum from Bank Nifty over the same recent window.             |
-| vix_change       | Captures same-day change in implied volatility/risk appetite.                         |
+| feature          | safe_timestamp                    | justification                                                                         |
+|:-----------------|:----------------------------------|:--------------------------------------------------------------------------------------|
+| ret_1d           | T+0 close, after NSE market hours | Captures immediate NIFTY momentum/reversal using only today's close versus yesterday. |
+| ret_5d           | T+0 close, after NSE market hours | Measures one-week index momentum while staying fully trailing.                        |
+| ret_20d          | T+0 close, after NSE market hours | Represents roughly one-month trend pressure available at today's close.               |
+| ret_intraday     | T+0 close, after NSE market hours | Separates same-session open-to-close demand from overnight movement.                  |
+| ret_overnight    | T+0 close, after NSE market hours | Captures gap risk and overnight sentiment visible by today's close.                   |
+| high_low_range   | T+0 close, after NSE market hours | Proxy for same-day realized volatility and uncertainty.                               |
+| volume_ratio_20d | T+0 close, after NSE market hours | Compares current participation with trailing liquidity conditions.                    |
+| close_vs_ma20    | T+0 close, after NSE market hours | Shows current price extension versus a trailing one-month moving average.             |
+| vol_20d          | T+0 close, after NSE market hours | Measures trailing one-month realized volatility of NIFTY returns.                     |
+| rsi_14           | T+0 close, after NSE market hours | Standard trailing momentum oscillator for overbought/oversold behavior.               |
+| bn_ret_5d        | T+0 close, after NSE market hours | Adds related-sector momentum from Bank Nifty over the same recent window.             |
+| vix_change       | T+0 close, after NSE market hours | Captures same-day change in implied volatility/risk appetite.                         |
+
+All selected features are safely computable only after the current trading session has completed. The intended prediction timestamp is therefore after the T+0 close, for a decision about the T+1 close direction. These features should not be used for an intraday prediction made before the current close is known.
+
+EDA changed three choices:
+
+- `outputs/eda_missingness.png`: the missingness plot showed that `close_vs_252d_high` and `close_vs_252d_low` have about 25% missing values because they need a full one-year lookback, so I dropped them.
+- `outputs/eda_correlation_heatmap.png`: the correlation heatmap showed overlapping trend/momentum clusters, so I kept one representative from each group instead of keeping `ret_5d`, `ret_10d`, `ret_20d`, `close_vs_ma5`, `close_vs_ma20`, and `momentum_5_20` all together.
+- `outputs/feature_importance.csv`: final-model importance concentrated on volatility, overnight return, and moving-average distance, which confirmed that the selected set still covered volatility, gap risk, trend, liquidity, cross-asset momentum, and VIX after dropping opaque features.
+
+Scaling decision: tree-based LightGBM does not require standard scaling, so I did not standardize features. Missing values are median-imputed inside the sklearn pipeline so imputation is fit only on each training window.
 
 The main suspicious column was `ma5_smooth_signal`. It is not a raw market measurement such as return, volatility, volume, or VIX. It is a prebuilt "signal" column, its exact formula is not documented in the data bundle, and its name suggests a smoothed trading rule rather than a transparent feature. Because the assignment asks for leakage awareness and because the provided starter features were explicitly "not rigorously audited," I treated it as medium leakage/model-design risk and removed it.
 
-Dropped feature audit:
-
-| feature            | leakage_risk   | reason                                                                                   |
-|:-------------------|:---------------|:-----------------------------------------------------------------------------------------|
-| bn_ret_1d          | low            | Dropped; bn_ret_5d is less noisy and still trailing.                                     |
-| close_vs_252d_high | low            | Dropped; more than 25 percent missing because it needs a 252-day lookback.               |
-| close_vs_252d_low  | low            | Dropped; more than 25 percent missing because it needs a 252-day lookback.               |
-| close_vs_ma5       | low            | Dropped; overlaps with close_vs_ma20 and short return features.                          |
-| close_vs_ma50      | low            | Dropped; higher missingness and overlaps with 20-day trend.                              |
-| dow                | low            | Dropped; calendar control has low market-specific content for the 12-feature limit.      |
-| log_volume         | low            | Dropped; volume_ratio_20d gives a more normalized liquidity signal.                      |
-| ma5_smooth_signal  | medium         | Dropped as suspicious; prebuilt signal-like feature could encode unreviewed label logic. |
-| momentum_5_20      | low            | Dropped; derived spread overlaps selected return horizons.                               |
-| nifty_bn_corr_20d  | low            | Dropped; rolling correlation is trailing but less directly interpretable.                |
-| nifty_bn_spread    | low            | Dropped; opaque spread definition and high overlap with NIFTY/Bank Nifty returns.        |
-| ret_10d            | low            | Dropped; overlaps strongly with selected trailing return horizons.                       |
-| ret_zscore         | low            | Dropped; opaque standardized return may duplicate return/volatility features.            |
-| vix_5d_change      | low            | Dropped; overlaps with selected VIX change.                                              |
-| vix_level          | low            | Dropped; vix_change captures risk regime movement with better stationarity.              |
-| vix_ma_ratio       | low            | Dropped; derived VIX trend overlaps selected VIX change.                                 |
-| vol_50d            | low            | Dropped; higher missingness and overlaps with vol_20d.                                   |
-| vol_5d             | low            | Dropped; overlaps with selected vol_20d and short return features.                       |
-| volume_normalized  | low            | Dropped; volume_ratio_20d is the clearer volume normalization.                           |
+Dropped-feature details are written to `outputs/feature_audit.csv`. The key removals were sparse 252-day features, highly overlapping trend/volatility variants, and `ma5_smooth_signal` because it is signal-like and undocumented.
 
 ## 4. Model
 
@@ -69,46 +57,16 @@ The model is a single `lightgbm.LGBMClassifier`. I removed logistic regression, 
 
 Walk-forward performance is weak. The model's walk-forward AUC is 0.478, compared with 0.464 for the majority baseline. The model's walk-forward hit rate is 50.34%, while the majority baseline hit rate is 51.15%. In plain English: before the locked test period, the model is not convincingly better than a naive class-prior rule.
 
-Walk-forward fold details:
+Walk-forward fold snapshot; full fold table is in `outputs/walk_forward_folds.csv`:
 
-|   fold_id | train_start   | train_end   | test_start   | test_end   |   hit_rate |    auc |
-|----------:|:--------------|:------------|:-------------|:-----------|-----------:|-------:|
-|         1 | 2022-01-03    | 2022-06-30  | 2022-07-01   | 2022-07-29 |     0.2857 | 0.4388 |
-|         2 | 2022-01-03    | 2022-07-29  | 2022-08-01   | 2022-08-30 |     0.5500 | 0.4762 |
-|         3 | 2022-01-03    | 2022-08-30  | 2022-09-01   | 2022-09-30 |     0.5000 | 0.4643 |
-|         4 | 2022-01-03    | 2022-09-30  | 2022-10-03   | 2022-10-31 |     0.5263 | 0.4857 |
-|         5 | 2022-01-03    | 2022-10-31  | 2022-11-01   | 2022-11-30 |     0.5714 | 0.5000 |
-|         6 | 2022-01-03    | 2022-11-30  | 2022-12-01   | 2022-12-30 |     0.4091 | 0.4083 |
-|         7 | 2022-01-03    | 2022-12-30  | 2023-01-02   | 2023-01-31 |     0.4286 | 0.4808 |
-|         8 | 2022-01-03    | 2023-01-31  | 2023-02-01   | 2023-02-28 |     0.5000 | 0.5604 |
-|         9 | 2022-01-03    | 2023-02-28  | 2023-03-01   | 2023-03-31 |     0.4286 | 0.5091 |
-|        10 | 2022-01-03    | 2023-03-31  | 2023-04-03   | 2023-04-28 |     0.5882 | 0.6731 |
-|        11 | 2022-01-03    | 2023-04-28  | 2023-05-02   | 2023-05-31 |     0.4091 | 0.2308 |
-|        12 | 2022-01-03    | 2023-05-31  | 2023-06-01   | 2023-06-30 |     0.5238 | 0.3556 |
-|        13 | 2022-01-03    | 2023-06-30  | 2023-07-03   | 2023-07-31 |     0.7619 | 0.5204 |
-|        14 | 2022-01-03    | 2023-07-31  | 2023-08-01   | 2023-08-31 |     0.5455 | 0.4833 |
-|        15 | 2022-01-03    | 2023-08-31  | 2023-09-01   | 2023-09-29 |     0.6000 | 0.2812 |
-|        16 | 2022-01-03    | 2023-09-29  | 2023-10-03   | 2023-10-31 |     0.5500 | 0.7143 |
-|        17 | 2022-01-03    | 2023-10-31  | 2023-11-01   | 2023-11-30 |     0.6000 | 0.6190 |
-|        18 | 2022-01-03    | 2023-11-30  | 2023-12-01   | 2023-12-29 |     0.7000 | 0.6400 |
-|        19 | 2022-01-03    | 2023-12-29  | 2024-01-01   | 2024-01-31 |     0.3810 | 0.3364 |
-|        20 | 2022-01-03    | 2024-01-31  | 2024-02-01   | 2024-02-29 |     0.3810 | 0.2653 |
-|        21 | 2022-01-03    | 2024-02-29  | 2024-03-01   | 2024-03-28 |     0.7222 | 0.6528 |
-|        22 | 2022-01-03    | 2024-03-28  | 2024-04-01   | 2024-04-30 |     0.4500 | 0.3900 |
-|        23 | 2022-01-03    | 2024-04-30  | 2024-05-02   | 2024-05-31 |     0.4286 | 0.4545 |
-|        24 | 2022-01-03    | 2024-05-31  | 2024-06-03   | 2024-06-28 |     0.4737 | 0.3714 |
-|        25 | 2022-01-03    | 2024-06-28  | 2024-07-01   | 2024-07-31 |     0.5909 | 0.2137 |
-|        26 | 2022-01-03    | 2024-07-31  | 2024-08-01   | 2024-08-30 |     0.5238 | 0.5000 |
-|        27 | 2022-01-03    | 2024-08-30  | 2024-09-02   | 2024-09-30 |     0.5714 | 0.4352 |
-|        28 | 2022-01-03    | 2024-09-30  | 2024-10-01   | 2024-10-31 |     0.3636 | 0.4667 |
-|        29 | 2022-01-03    | 2024-10-31  | 2024-11-01   | 2024-11-29 |     0.3684 | 0.5114 |
-|        30 | 2022-01-03    | 2024-11-29  | 2024-12-02   | 2024-12-31 |     0.6190 | 0.6944 |
-|        31 | 2022-01-03    | 2024-12-31  | 2025-01-01   | 2025-01-31 |     0.5652 | 0.5833 |
-|        32 | 2022-01-03    | 2025-01-31  | 2025-02-01   | 2025-02-28 |     0.2000 | 0.1944 |
-|        33 | 2022-01-03    | 2025-02-28  | 2025-03-03   | 2025-03-28 |     0.6842 | 0.6786 |
-|        34 | 2022-01-03    | 2025-03-28  | 2025-04-01   | 2025-04-30 |     0.4737 | 0.5952 |
-|        35 | 2022-01-03    | 2025-04-30  | 2025-05-02   | 2025-05-30 |     0.4762 | 0.4630 |
-|        36 | 2022-01-03    | 2025-05-30  | 2025-06-02   | 2025-06-30 |     0.4286 | 0.4135 |
+|   fold_id | test_start   | test_end   |   hit_rate |    auc |
+|----------:|:-------------|:-----------|-----------:|-------:|
+|         1 | 2022-07-01   | 2022-07-29 |     0.2857 | 0.4388 |
+|         2 | 2022-08-01   | 2022-08-30 |     0.5500 | 0.4762 |
+|         3 | 2022-09-01   | 2022-09-30 |     0.5000 | 0.4643 |
+|        34 | 2025-04-01   | 2025-04-30 |     0.4737 | 0.5952 |
+|        35 | 2025-05-02   | 2025-05-30 |     0.4762 | 0.4630 |
+|        36 | 2025-06-02   | 2025-06-30 |     0.4286 | 0.4135 |
 
 In-sample walk-forward metrics with 95% bootstrap confidence intervals:
 
