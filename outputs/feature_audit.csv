@@ -1,0 +1,32 @@
+feature,selected,missing_rate,leakage_risk,decision,reason,final_feature_justification
+bn_ret_5d,True,0.005060728744939271,low,keep,Selected; trailing cross-asset momentum from Bank Nifty.,Adds related-sector momentum from Bank Nifty over the same recent window.
+close_vs_ma20,True,0.019230769230769232,low,keep,Selected; trailing MA distance without future values.,Shows current price extension versus a trailing one-month moving average.
+high_low_range,True,0.0,low,keep,Selected; same-day high-low range known after market close.,Proxy for same-day realized volatility and uncertainty.
+ret_1d,True,0.0010121457489878543,low,keep,"Selected; simple trailing return, no forward target reference.",Captures immediate NIFTY momentum/reversal using only today's close versus yesterday.
+ret_20d,True,0.020242914979757085,low,keep,"Selected; trailing 20-day return, no forward target reference.",Represents roughly one-month trend pressure available at today's close.
+ret_5d,True,0.005060728744939271,low,keep,"Selected; trailing five-day return, no forward target reference.",Measures one-week index momentum while staying fully trailing.
+ret_intraday,True,0.0,low,keep,Selected; uses same-day open and close known after market close.,Separates same-session open-to-close demand from overnight movement.
+ret_overnight,True,0.0010121457489878543,low,keep,Selected; uses current open versus previous close.,Captures gap risk and overnight sentiment visible by today's close.
+rsi_14,True,0.01417004048582996,low,keep,"Selected; trailing oscillator, no direct future target reference.",Standard trailing momentum oscillator for overbought/oversold behavior.
+vix_change,True,0.0010121457489878543,low,keep,Selected; same-day implied-volatility change.,Captures same-day change in implied volatility/risk appetite.
+vol_20d,True,0.020242914979757085,low,keep,Selected; trailing realized volatility with modest missingness.,Measures trailing one-month realized volatility of NIFTY returns.
+volume_ratio_20d,True,0.14271255060728744,low,keep,Selected; current volume relative to trailing 20-day history.,Compares current participation with trailing liquidity conditions.
+bn_ret_1d,False,0.0010121457489878543,low,drop,Dropped; bn_ret_5d is less noisy and still trailing.,
+close_vs_252d_high,False,0.2540485829959514,low,drop,Dropped; more than 25 percent missing because it needs a 252-day lookback.,
+close_vs_252d_low,False,0.2540485829959514,low,drop,Dropped; more than 25 percent missing because it needs a 252-day lookback.,
+close_vs_ma5,False,0.004048582995951417,low,drop,Dropped; overlaps with close_vs_ma20 and short return features.,
+close_vs_ma50,False,0.04959514170040486,low,drop,Dropped; higher missingness and overlaps with 20-day trend.,
+dow,False,0.0,low,drop,Dropped; calendar control has low market-specific content for the 12-feature limit.,
+log_volume,False,0.008097165991902834,low,drop,Dropped; volume_ratio_20d gives a more normalized liquidity signal.,
+ma5_smooth_signal,False,0.004048582995951417,medium,drop,Dropped as suspicious; prebuilt signal-like feature could encode unreviewed label logic.,
+momentum_5_20,False,0.020242914979757085,low,drop,Dropped; derived spread overlaps selected return horizons.,
+nifty_bn_corr_20d,False,0.020242914979757085,low,drop,Dropped; rolling correlation is trailing but less directly interpretable.,
+nifty_bn_spread,False,0.0010121457489878543,low,drop,Dropped; opaque spread definition and high overlap with NIFTY/Bank Nifty returns.,
+ret_10d,False,0.010121457489878543,low,drop,Dropped; overlaps strongly with selected trailing return horizons.,
+ret_zscore,False,0.0010121457489878543,low,drop,Dropped; opaque standardized return may duplicate return/volatility features.,
+vix_5d_change,False,0.005060728744939271,low,drop,Dropped; overlaps with selected VIX change.,
+vix_level,False,0.0,low,drop,Dropped; vix_change captures risk regime movement with better stationarity.,
+vix_ma_ratio,False,0.019230769230769232,low,drop,Dropped; derived VIX trend overlaps selected VIX change.,
+vol_50d,False,0.05060728744939271,low,drop,Dropped; higher missingness and overlaps with vol_20d.,
+vol_5d,False,0.005060728744939271,low,drop,Dropped; overlaps with selected vol_20d and short return features.,
+volume_normalized,False,0.008097165991902834,low,drop,Dropped; volume_ratio_20d is the clearer volume normalization.,

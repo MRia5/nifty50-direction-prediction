@@ -2,163 +2,153 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import lightgbm as lgb
 import numpy as np
 import pandas as pd
-from sklearn.ensemble import GradientBoostingClassifier, RandomForestClassifier
 from sklearn.impute import SimpleImputer
-from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import (
-    accuracy_score,
-    confusion_matrix,
-    f1_score,
-    precision_score,
-    recall_score,
-    roc_auc_score,
-)
-from sklearn.model_selection import TimeSeriesSplit, cross_val_score
 from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import StandardScaler
 
-from financial_ml_project.config import RANDOM_STATE, TEST_SIZE
+from financial_ml_project.config import (
+    INITIAL_TRAIN_MONTHS,
+    INSAMPLE_END,
+    INSAMPLE_START,
+    OOS_END,
+    OOS_START,
+    RANDOM_STATE,
+)
+from financial_ml_project.features import SELECTED_FEATURES
 
 
 @dataclass(frozen=True)
-class SplitData:
-    x_train: pd.DataFrame
-    x_test: pd.DataFrame
-    y_train: pd.Series
-    y_test: pd.Series
-    test_dates: pd.Series
+class Fold:
+    fold_id: int
+    train: pd.DataFrame
+    test: pd.DataFrame
+    train_start: pd.Timestamp
+    train_end: pd.Timestamp
+    test_start: pd.Timestamp
+    test_end: pd.Timestamp
 
 
-def split_chronologically(frame: pd.DataFrame, test_size: float = TEST_SIZE) -> SplitData:
-    feature_columns = [column for column in frame.columns if column not in {"date", "target"}]
-    split_index = int(len(frame) * (1 - test_size))
-
-    train = frame.iloc[:split_index].copy()
-    test = frame.iloc[split_index:].copy()
-
-    return SplitData(
-        x_train=train[feature_columns],
-        x_test=test[feature_columns],
-        y_train=train["target"],
-        y_test=test["target"],
-        test_dates=test["date"],
+def build_lightgbm_pipeline() -> Pipeline:
+    return Pipeline(
+        steps=[
+            ("imputer", SimpleImputer(strategy="median").set_output(transform="pandas")),
+            (
+                "model",
+                lgb.LGBMClassifier(
+                    objective="binary",
+                    boosting_type="gbdt",
+                    n_estimators=120,
+                    learning_rate=0.03,
+                    num_leaves=7,
+                    max_depth=3,
+                    min_child_samples=25,
+                    subsample=0.9,
+                    colsample_bytree=0.9,
+                    reg_alpha=0.1,
+                    reg_lambda=1.0,
+                    random_state=RANDOM_STATE,
+                    verbosity=-1,
+                ),
+            ),
+        ]
     )
 
 
-def build_models() -> dict[str, Pipeline]:
-    return {
-        "logistic_regression": Pipeline(
-            steps=[
-                ("imputer", SimpleImputer(strategy="median")),
-                ("scaler", StandardScaler()),
-                (
-                    "model",
-                    LogisticRegression(
-                        class_weight="balanced",
-                        max_iter=2000,
-                        random_state=RANDOM_STATE,
-                    ),
-                ),
-            ]
-        ),
-        "random_forest": Pipeline(
-            steps=[
-                ("imputer", SimpleImputer(strategy="median")),
-                (
-                    "model",
-                    RandomForestClassifier(
-                        n_estimators=400,
-                        min_samples_leaf=8,
-                        class_weight="balanced_subsample",
-                        random_state=RANDOM_STATE,
-                        n_jobs=-1,
-                    ),
-                ),
-            ]
-        ),
-        "gradient_boosting": Pipeline(
-            steps=[
-                ("imputer", SimpleImputer(strategy="median")),
-                (
-                    "model",
-                    GradientBoostingClassifier(
-                        n_estimators=200,
-                        learning_rate=0.04,
-                        max_depth=2,
-                        random_state=RANDOM_STATE,
-                    ),
-                ),
-            ]
-        ),
-    }
+def model_params() -> dict[str, float | int | str]:
+    model = build_lightgbm_pipeline().named_steps["model"]
+    return {f"lightgbm_{key}": value for key, value in model.get_params().items()}
 
 
-def choose_model(models: dict[str, Pipeline], split: SplitData) -> tuple[str, Pipeline, pd.DataFrame]:
-    cv = TimeSeriesSplit(n_splits=5)
-    rows = []
+def monthly_expanding_folds(frame: pd.DataFrame) -> list[Fold]:
+    in_sample = frame[
+        (frame["date"] >= pd.Timestamp(INSAMPLE_START))
+        & (frame["date"] <= pd.Timestamp(INSAMPLE_END))
+    ].copy()
+    months = pd.period_range(
+        in_sample["date"].min().to_period("M"),
+        in_sample["date"].max().to_period("M"),
+        freq="M",
+    )
 
-    for name, model in models.items():
-        scores = cross_val_score(model, split.x_train, split.y_train, cv=cv, scoring="accuracy")
-        rows.append(
-            {
-                "model": name,
-                "cv_accuracy_mean": scores.mean(),
-                "cv_accuracy_std": scores.std(),
-            }
+    folds: list[Fold] = []
+    for fold_id, test_month in enumerate(months[INITIAL_TRAIN_MONTHS:], start=1):
+        train_months = months[: months.get_loc(test_month)]
+        train = in_sample[in_sample["date"].dt.to_period("M").isin(train_months)].copy()
+        test = in_sample[in_sample["date"].dt.to_period("M") == test_month].copy()
+        if train.empty or test.empty:
+            continue
+        folds.append(
+            Fold(
+                fold_id=fold_id,
+                train=train,
+                test=test,
+                train_start=train["date"].min(),
+                train_end=train["date"].max(),
+                test_start=test["date"].min(),
+                test_end=test["date"].max(),
+            )
         )
-
-    results = pd.DataFrame(rows).sort_values("cv_accuracy_mean", ascending=False)
-    best_name = str(results.iloc[0]["model"])
-    best_model = models[best_name]
-    best_model.fit(split.x_train, split.y_train)
-
-    return best_name, best_model, results
+    return folds
 
 
-def evaluate_model(model: Pipeline, split: SplitData) -> tuple[dict[str, float], pd.DataFrame, np.ndarray]:
-    prediction = model.predict(split.x_test)
+def out_of_sample_split(frame: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    train = frame[
+        (frame["date"] >= pd.Timestamp(INSAMPLE_START))
+        & (frame["date"] <= pd.Timestamp(INSAMPLE_END))
+    ].copy()
+    test = frame[
+        (frame["date"] >= pd.Timestamp(OOS_START))
+        & (frame["date"] <= pd.Timestamp(OOS_END))
+    ].copy()
+    return train, test
 
-    if hasattr(model, "predict_proba"):
-        probability = model.predict_proba(split.x_test)[:, 1]
-    else:
-        probability = prediction.astype(float)
 
-    metrics = {
-        "accuracy": accuracy_score(split.y_test, prediction),
-        "precision": precision_score(split.y_test, prediction, zero_division=0),
-        "recall": recall_score(split.y_test, prediction, zero_division=0),
-        "f1": f1_score(split.y_test, prediction, zero_division=0),
-        "roc_auc": roc_auc_score(split.y_test, probability),
-        "positive_rate_actual": float(split.y_test.mean()),
-        "positive_rate_predicted": float(prediction.mean()),
-    }
+def feature_matrix(frame: pd.DataFrame) -> tuple[pd.DataFrame, pd.Series]:
+    return frame[SELECTED_FEATURES], frame["target"]
 
-    predictions = pd.DataFrame(
+
+def predict_with_model(model: Pipeline, test: pd.DataFrame) -> pd.DataFrame:
+    x_test, _ = feature_matrix(test)
+    probability = model.predict_proba(x_test)[:, 1]
+    predicted = (probability >= 0.5).astype(int)
+    return pd.DataFrame(
         {
-            "date": split.test_dates.values,
-            "actual": split.y_test.values,
-            "predicted": prediction,
+            "date": test["date"].values,
+            "actual": test["target"].values,
+            "predicted": predicted,
             "probability_up": probability,
+            "next_return": test["next_return"].values,
         }
     )
 
-    return metrics, predictions, confusion_matrix(split.y_test, prediction)
+
+def majority_baseline_predictions(train: pd.DataFrame, test: pd.DataFrame) -> pd.DataFrame:
+    majority_class = int(train["target"].mean() >= 0.5)
+    probability = float(train["target"].mean())
+    return pd.DataFrame(
+        {
+            "date": test["date"].values,
+            "actual": test["target"].values,
+            "predicted": majority_class,
+            "probability_up": probability,
+            "next_return": test["next_return"].values,
+        }
+    )
 
 
-def extract_feature_importance(model: Pipeline, feature_names: list[str]) -> pd.DataFrame:
-    fitted_model = model.named_steps["model"]
+def fit_model(train: pd.DataFrame) -> Pipeline:
+    x_train, y_train = feature_matrix(train)
+    model = build_lightgbm_pipeline()
+    model.fit(x_train, y_train)
+    return model
 
-    if hasattr(fitted_model, "feature_importances_"):
-        values = fitted_model.feature_importances_
-    elif hasattr(fitted_model, "coef_"):
-        values = np.abs(fitted_model.coef_[0])
-    else:
-        values = np.zeros(len(feature_names))
 
+def extract_feature_importance(model: Pipeline) -> pd.DataFrame:
+    values = model.named_steps["model"].feature_importances_
     return (
-        pd.DataFrame({"feature": feature_names, "importance": values})
+        pd.DataFrame({"feature": SELECTED_FEATURES, "importance": values})
         .sort_values("importance", ascending=False)
         .reset_index(drop=True)
     )

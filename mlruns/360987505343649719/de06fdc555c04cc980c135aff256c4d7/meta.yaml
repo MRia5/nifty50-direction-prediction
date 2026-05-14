@@ -1,0 +1,14 @@
+artifact_uri: file:///C:/Users/airmd/OneDrive/Documents/nifty50-direction-prediction/mlruns/360987505343649719/de06fdc555c04cc980c135aff256c4d7/artifacts
+end_time: 1778736496204
+entry_point_name: ''
+experiment_id: '360987505343649719'
+lifecycle_stage: active
+run_id: de06fdc555c04cc980c135aff256c4d7
+run_name: walk_forward_fold_11
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1778736490833
+status: 3
+tags: []
+user_id: airmd

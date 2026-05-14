@@ -1,0 +1,10 @@
+artifact_location: file:///C:/Users/airmd/OneDrive/Documents/nifty50-direction-prediction/mlruns/360987505343649719/models/m-f24d364e7662416faa0c896464b81d51/artifacts
+creation_timestamp: 1778736458161
+experiment_id: '360987505343649719'
+last_updated_timestamp: 1778736463091
+model_id: m-f24d364e7662416faa0c896464b81d51
+model_type: null
+name: model
+source_run_id: 0771663ddd0f4078af32ae16beb97f25
+status: 2
+status_message: null

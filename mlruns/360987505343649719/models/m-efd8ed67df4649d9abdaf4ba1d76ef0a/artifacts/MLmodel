@@ -1,0 +1,23 @@
+artifact_path: file:///C:/Users/airmd/OneDrive/Documents/nifty50-direction-prediction/mlruns/360987505343649719/models/m-efd8ed67df4649d9abdaf4ba1d76ef0a/artifacts
+flavors:
+  python_function:
+    env:
+      conda: conda.yaml
+      virtualenv: python_env.yaml
+    loader_module: mlflow.sklearn
+    model_path: model.pkl
+    predict_fn: predict
+    python_version: 3.11.2
+  sklearn:
+    code: null
+    pickled_model: model.pkl
+    serialization_format: cloudpickle
+    sklearn_version: 1.8.0
+    skops_trusted_types: null
+mlflow_version: 3.12.0
+model_id: m-efd8ed67df4649d9abdaf4ba1d76ef0a
+model_size_bytes: 91257
+model_uuid: m-efd8ed67df4649d9abdaf4ba1d76ef0a
+prompts: null
+run_id: b5ec0ddba6024e7b90acaae273e2df42
+utc_time_created: '2026-05-14 05:28:00.444024'

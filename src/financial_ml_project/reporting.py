@@ -6,89 +6,119 @@ import matplotlib.pyplot as plt
 import pandas as pd
 from sklearn.metrics import ConfusionMatrixDisplay, RocCurveDisplay
 
+from financial_ml_project.features import FEATURE_JUSTIFICATIONS, SELECTED_FEATURES
 
-def save_metrics(metrics: dict[str, float], model_name: str, cv_results: pd.DataFrame, output_dir: Path) -> None:
-    output_dir.mkdir(parents=True, exist_ok=True)
 
-    metric_frame = pd.DataFrame(
-        [{"model": model_name, **metrics}]
+def save_confusion_plot(predictions: pd.DataFrame, output_path: Path) -> None:
+    fig, ax = plt.subplots(figsize=(5, 4))
+    ConfusionMatrixDisplay.from_predictions(
+        predictions["actual"],
+        predictions["predicted"],
+        labels=[0, 1],
+        display_labels=["Down", "Up"],
+        ax=ax,
     )
-    metric_frame.to_csv(output_dir / "metrics.csv", index=False)
-    cv_results.to_csv(output_dir / "cv_results.csv", index=False)
-
-
-def save_diagnostic_plots(model, split, confusion, output_dir: Path) -> None:
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    fig, ax = plt.subplots(figsize=(5, 4))
-    ConfusionMatrixDisplay(confusion_matrix=confusion, display_labels=["Down", "Up"]).plot(ax=ax)
-    ax.set_title("Test Confusion Matrix")
+    ax.set_title("Out-of-Sample Confusion Matrix")
     fig.tight_layout()
-    fig.savefig(output_dir / "confusion_matrix.png", dpi=160)
+    fig.savefig(output_path, dpi=160)
     plt.close(fig)
 
+
+def save_roc_plot(predictions: pd.DataFrame, output_path: Path) -> None:
     fig, ax = plt.subplots(figsize=(5, 4))
-    RocCurveDisplay.from_estimator(model, split.x_test, split.y_test, ax=ax)
-    ax.set_title("Test ROC Curve")
+    RocCurveDisplay.from_predictions(
+        predictions["actual"],
+        predictions["probability_up"],
+        ax=ax,
+    )
+    ax.set_title("Out-of-Sample ROC Curve")
     fig.tight_layout()
-    fig.savefig(output_dir / "roc_curve.png", dpi=160)
+    fig.savefig(output_path, dpi=160)
     plt.close(fig)
+
+
+def metric_table(metrics: pd.DataFrame, sample: str) -> str:
+    subset = metrics[metrics["sample"] == sample].copy()
+    subset["value_ci"] = subset.apply(
+        lambda row: f"{row['value']:.4f} [{row['ci_low']:.4f}, {row['ci_high']:.4f}]",
+        axis=1,
+    )
+    pivot = subset.pivot(index="metric", columns="model", values="value_ci").reset_index()
+    return pivot.to_markdown(index=False)
 
 
 def write_report(
     output_dir: Path,
-    model_name: str,
-    metrics: dict[str, float],
-    cv_results: pd.DataFrame,
+    fold_summary: pd.DataFrame,
+    metrics_with_ci: pd.DataFrame,
+    feature_audit: pd.DataFrame,
     feature_importance: pd.DataFrame,
     n_rows: int,
-    train_rows: int,
-    test_rows: int,
+    n_folds: int,
+    oos_rows: int,
 ) -> None:
-    top_features = feature_importance.head(10)
-    cv_table = cv_results.to_markdown(index=False, floatfmt=".4f")
-    feature_table = top_features.to_markdown(index=False, floatfmt=".6f")
+    selected_rows = [
+        {"feature": feature, "justification": FEATURE_JUSTIFICATIONS[feature]}
+        for feature in SELECTED_FEATURES
+    ]
+    selected_table = pd.DataFrame(selected_rows).to_markdown(index=False)
+    dropped_table = feature_audit[~feature_audit["selected"]][
+        ["feature", "leakage_risk", "reason"]
+    ].to_markdown(index=False)
+    fold_table = fold_summary[
+        ["fold_id", "train_start", "train_end", "test_start", "test_end", "hit_rate", "auc"]
+    ].to_markdown(index=False, floatfmt=".4f")
+    importance_table = feature_importance.head(12).to_markdown(index=False)
 
     report = f"""# Financial ML Track Report
 
 ## Objective
 
-Predict whether the NIFTY 50 close will rise on the next trading day using daily market, volume, volatility, Bank Nifty, and India VIX features.
+Predict next-day NIFTY 50 close direction with a single gradient-boosting model and MLflow-tracked expanding-window validation.
 
-## Data
+## Data And Splits
 
 - Total usable observations: {n_rows}
-- Training observations: {train_rows}
-- Test observations: {test_rows}
-- Target: `1` when `close[t + 1] > close[t]`, otherwise `0`
+- Walk-forward in-sample period: January 2022 through June 2025
+- Locked out-of-sample period: July 2025 through December 2025
+- Expanding walk-forward folds: {n_folds}
+- Out-of-sample observations: {oos_rows}
 
-The split is chronological. The final 20 percent of observations are used only for out-of-sample testing.
+The model trains on months 1-N, predicts month N+1, shifts forward, and repeats. The July-December 2025 block is evaluated once at the end only.
 
-## Models Compared
+## Model
 
-{cv_table}
+Only one model is used: `lightgbm.LGBMClassifier`. Logistic regression, random forest, and sklearn's GradientBoostingClassifier were removed. Every walk-forward fold and the final out-of-sample fit are wrapped in `mlflow.start_run()` and logged under the committed `mlruns/` directory.
 
-Selected model: `{model_name}`.
+## Final 12 Features
 
-## Test Performance
+{selected_table}
 
-| Metric | Value |
-|---|---:|
-| Accuracy | {metrics["accuracy"]:.4f} |
-| Precision | {metrics["precision"]:.4f} |
-| Recall | {metrics["recall"]:.4f} |
-| F1 | {metrics["f1"]:.4f} |
-| ROC-AUC | {metrics["roc_auc"]:.4f} |
-| Actual up-day rate | {metrics["positive_rate_actual"]:.4f} |
-| Predicted up-day rate | {metrics["positive_rate_predicted"]:.4f} |
+## Feature Audit
 
-## Most Important Features
+Every column in `starter_features.csv` was reviewed. No direct tomorrow-close or future-target feature name was found. Opaque prebuilt signal columns and sparse/overlapping columns were dropped.
 
-{feature_table}
+{dropped_table}
+
+## Walk-Forward Fold Metrics
+
+{fold_table}
+
+## In-Sample Walk-Forward Metrics With 95% Bootstrap CI
+
+{metric_table(metrics_with_ci, "walk_forward")}
+
+## Locked Out-Of-Sample Metrics With 95% Bootstrap CI
+
+{metric_table(metrics_with_ci, "out_of_sample")}
+
+## Feature Importance
+
+{importance_table}
 
 ## Interpretation
 
-This is a supervised directional model rather than a trading system. The most useful next step would be to evaluate turnover, transaction costs, position sizing, and drawdowns before treating the signal as tradable.
+The majority-class baseline is included beside the model for every reported metric. Trading diagnostics use a simple directional strategy: predicted up is long NIFTY for the next day, predicted down is short NIFTY for the next day. Sharpe, drawdown, and turnover therefore describe signal behavior, not a production trading strategy with costs or constraints.
 """
 
     (output_dir / "report.md").write_text(report, encoding="utf-8")

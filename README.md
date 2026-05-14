@@ -1,10 +1,10 @@
 # NIFTY 50 Direction Prediction
 
-Python machine-learning project for the Financial ML track. The goal is to predict the next trading day's NIFTY 50 close direction:
+Financial ML project for predicting the next trading day's NIFTY 50 close direction:
 
 `target = 1 if close[t + 1] > close[t], else 0`
 
-The project uses the provided 2022-2025 NSE data bundle, starter technical/cross-asset features, and a chronological train/test split so future observations never leak into the model.
+The main pipeline is an MLflow-tracked expanding-window workflow using a single LightGBM gradient-boosting classifier.
 
 ## Project Structure
 
@@ -12,15 +12,14 @@ The project uses the provided 2022-2025 NSE data bundle, starter technical/cross
 data/raw/                         Input CSV files
 docs/                             Original brief and data bundle notes
 src/financial_ml_project/         Reusable Python package
-outputs/                          Generated metrics, predictions, plots, report
+outputs/                          Generated reports, plots, predictions, metrics
+mlruns/                           Committed MLflow experiment runs and model artifacts
 main.py                           End-to-end runner
 requirements.txt                  Python dependencies
 tests/                            Lightweight unit tests
 ```
 
 ## How To Run
-
-Create a virtual environment, install dependencies, then run the pipeline.
 
 ```bash
 python -m venv .venv
@@ -29,31 +28,45 @@ pip install -r requirements.txt
 python main.py
 ```
 
-The run writes:
+## Modeling Approach
 
-- `outputs/metrics.csv`
-- `outputs/predictions.csv`
+- Model: `lightgbm.LGBMClassifier`
+- Removed: logistic regression, random forest, and sklearn `GradientBoostingClassifier`
+- Features: exactly 12 audited same-day/trailing features from `starter_features.csv`
+- In-sample walk-forward: January 2022 through June 2025
+- Out-of-sample lockbox: July 2025 through December 2025
+- Validation: expanding monthly folds, train months 1-N and predict month N+1
+- Tracking: every training fold is wrapped in `mlflow.start_run()` before fitting
+
+## Outputs
+
+Running `python main.py` writes:
+
+- `outputs/report.md`
+- `outputs/feature_audit.csv`
+- `outputs/walk_forward_folds.csv`
+- `outputs/walk_forward_predictions.csv`
+- `outputs/oos_predictions.csv`
+- `outputs/metrics_with_bootstrap_ci.csv`
 - `outputs/feature_importance.csv`
 - `outputs/confusion_matrix.png`
 - `outputs/roc_curve.png`
-- `outputs/report.md`
+- `mlruns/`
 
-## Modeling Approach
+## Metrics
 
-The pipeline compares three baseline classifiers:
+The model is compared against a majority-class baseline using:
 
-- Logistic regression with scaling
-- Random forest
-- Gradient boosting
+- AUC
+- Balanced accuracy
+- Confusion matrix counts
+- Sharpe ratio
+- Max drawdown
+- Hit rate
+- Turnover
 
-Rows are sorted by date, features are imputed inside each model pipeline, and the last 20 percent of observations are held out as the final test set. Model selection is based on walk-forward cross-validation accuracy, with final evaluation reported on the untouched chronological test period.
+Each reported metric includes a 95 percent bootstrap confidence interval.
 
-## Feature Set
+## Feature Audit
 
-The implementation uses `starter_features.csv` as the main feature table because it already combines NIFTY price behavior, Bank Nifty cross-asset signals, India VIX information, rolling volatility, volume, and calendar effects. The code still rebuilds the target directly from `nifty50.csv` so the target definition is explicit and auditable.
-
-Features with more than 25 percent missing values are dropped before modeling. This removes long-lookback columns that are unavailable in the early walk-forward folds.
-
-## Notes
-
-This is a directional classification project, not an executable trading strategy. Accuracy, ROC-AUC, precision, recall, and confusion matrix results should be interpreted as model diagnostics rather than evidence of profitability after costs, slippage, and position sizing.
+The project audits every column in `starter_features.csv`. Direct future-looking column names were not found, but opaque signal-like, sparse, and overlapping features are dropped. The final feature list and one-line justification for each feature are written into `outputs/report.md` and `outputs/feature_audit.csv`.
